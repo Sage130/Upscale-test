@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Upscaler — Lanczos + Unsharp Mask</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f5f4f1;
+      --surface: #ffffff;
+      --surface2: #f0eff0;
+      --border: rgba(0,0,0,0.1);
+      --border2: rgba(0,0,0,0.2);
+      --text: #1a1a1a;
+      --text2: #666;
+      --text3: #999;
+      --purple: #534AB7;
+      --purple-light: #EEEDFE;
+      --purple-mid: #7F77DD;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Noto Sans Thai', sans-serif;
+      background: var(--bg);
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 780px;
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 2rem;
+      border: 0.5px solid var(--border);
+    }
+
+    .app-header { margin-bottom: 1.5rem; }
+    .app-title {
+      font-size: 22px; font-weight: 600;
+      color: var(--text); display: flex;
+      align-items: center; gap: 8px;
+    }
+    .app-title svg { color: var(--purple-mid); }
+    .app-sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
+    /* Drop Zone */
+    .drop-zone {
+      border: 2px dashed var(--border2);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: var(--surface2);
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--purple-mid);
+      background: var(--purple-light);
+    }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
+    }
+    .drop-icon { font-size: 40px; margin-bottom: 10px; color: var(--text3); }
+    .drop-text { font-size: 15px; color: var(--text2); font-weight: 500; }
+    .drop-hint { font-size: 12px; color: var(--text3); margin-top: 6px; }
+
+    /* Settings */
+    .settings-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 1.25rem 0;
+    }
+    .setting-card {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+    }
+    .setting-label {
+      font-size: 11px; color: var(--text3);
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin-bottom: 6px;
+    }
+    select {
+      width: 100%;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius-md);
+      padding: 7px 10px;
+      font-size: 13px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      outline: none;
+    }
+    select:focus { border-color: var(--purple-mid); }
+
+    /* Preview */
+    .preview-area { display: none; margin: 1.25rem 0; }
+    .preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 500px) { .preview-grid { grid-template-columns: 1fr; } }
+
+    .preview-box {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .preview-label {
+      padding: 8px 12px;
+      font-size: 12px; font-weight: 500;
+      color: var(--text2);
+      border-bottom: 0.5px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .preview-box img, .preview-box canvas {
+      width: 100%; display: block;
+      max-height: 240px; object-fit: contain;
+      background: #ccc;
+    }
+
+    /* Progress */
+    .progress-wrap { display: none; margin: 0.75rem 0; }
+    .progress-bar-bg {
+      height: 6px; background: var(--surface2);
+      border-radius: 99px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--purple-mid), var(--purple));
+      border-radius: 99px;
+      transition: width 0.25s ease;
+    }
+    .progress-label { font-size: 12px; color: var(--text2); margin-top: 6px; }
+
+    /* Stats */
+    .stats-row {
+      display: none; flex-wrap: wrap;
+      gap: 8px; margin: 0.75rem 0;
+    }
+    .stat-pill {
+      font-size: 12px; padding: 4px 12px;
+      background: var(--purple-light);
+      color: var(--purple);
+      border-radius: 99px; font-weight: 500;
+    }
+
+    /* Buttons */
+    .btn-upscale {
+      width: 100%; padding: 13px;
+      background: var(--purple);
+      color: white;
+      border: none; border-radius: var(--radius-md);
+      font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      margin: 1rem 0 0.5rem;
+      display: flex; align-items: center;
+      justify-content: center; gap: 8px;
+    }
+    .btn-upscale:hover:not(:disabled) { background: #3C3489; }
+    .btn-upscale:active:not(:disabled) { transform: scale(0.99); }
+    .btn-upscale:disabled {
+      background: var(--surface2);
+      color: var(--text3); cursor: not-allowed;
+    }
+
+    .btn-download {
+      width: 100%; padding: 11px;
+      background: transparent;
+      color: var(--purple);
+      border: 1.5px solid var(--purple);
+      border-radius: var(--radius-md);
+      font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      display: none;
+      align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-download:hover { background: var(--purple-light); }
+
+    /* Hidden work canvas */
+    #workCanvas { display: none; }
+
+    footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: 12px;
+      color: var(--text3);
+    }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <div class="app-header">
+    <div class="app-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.88 5.76a1 1 0 0 0 .95.69h6.06l-4.91 3.56a1 1 0 0 0-.36 1.12L17.5 20l-4.91-3.56a1 1 0 0 0-1.18 0L6.5 20l1.88-5.87a1 1 0 0 0-.36-1.12L3.11 9.45h6.06a1 1 0 0 0 .95-.69L12 3z"/></svg>
+      Image Upscaler
+    </div>
+    <div class="app-sub">เพิ่มขนาดและความคมชัดด้วย Lanczos Resampling + Unsharp Masking</div>
+  </div>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="dropZone">
+    <input type="file" accept="image/*" id="fileInput">
+    <div class="drop-icon">🖼️</div>
+    <div class="drop-text">คลิกหรือลากไฟล์ภาพมาวางที่นี่</div>
+    <div class="drop-hint">รองรับ JPG, PNG, WebP · ทำงานบนเครื่องของคุณ ไม่ส่งข้อมูลออก</div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-row">
+    <div class="setting-card">
+      <div class="setting-label">ขยายขนาด (Scale)</div>
+      <select id="scaleSelect">
+        <option value="2">× 2 &nbsp;(เช่น 1200 → 2400)</option>
+        <option value="3">× 3 &nbsp;(เช่น 1200 → 3600)</option>
+        <option value="4">× 4 &nbsp;(เช่น 1200 → 4800)</option>
+      </select>
+    </div>
+    <div class="setting-card">
+      <div class="setting-label">ความคมชัด (Sharpness)</div>
+      <select id="sharpSelect">
+        <option value="light">เบา — Light</option>
+        <option value="medium" selected>กลาง — Medium</option>
+        <option value="strong">สูง — High</option>
+      </select>
+    </div>
+    <div class="setting-card">
+      <div class="setting-label">รูปแบบไฟล์ผลลัพธ์</div>
+      <select id="formatSelect">
+        <option value="png">PNG (ไม่สูญเสียคุณภาพ)</option>
+        <option value="jpeg">JPEG (ไฟล์เล็กกว่า)</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Preview -->
+  <div class="preview-area" id="previewArea">
+    <div class="preview-grid">
+      <div class="preview-box">
+        <div class="preview-label">
+          <span>ภาพต้นฉบับ</span>
+          <span id="origSize" style="color:#999;font-weight:400"></span>
+        </div>
+        <img id="origPreview" alt="ภาพต้นฉบับ">
+      </div>
+      <div class="preview-box">
+        <div class="preview-label">
+          <span>ผลลัพธ์</span>
+          <span id="outSize" style="color:#999;font-weight:400"></span>
+        </div>
+        <canvas id="resultCanvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-label" id="progressLabel">กำลังประมวลผล...</div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row" id="statsRow"></div>
+
+  <!-- Buttons -->
+  <button class="btn-upscale" id="btnUpscale" disabled>
+    ✨ เพิ่มความคมชัดและขยายภาพ
+  </button>
+  <button class="btn-download" id="btnDownload">
+    ⬇️ ดาวน์โหลดภาพผลลัพธ์
+  </button>
+
+  <footer>ทำงานบนเบราว์เซอร์ · ไม่มีการส่งข้อมูลออกอินเทอร์เน็ต · Lanczos + Unsharp Mask</footer>
+</div>
+
+<!-- Hidden canvas for processing -->
+<canvas id="workCanvas"></canvas>
+
+<script>
+  // ─── DOM refs ─────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('dropZone');
+  const fileInput     = document.getElementById('fileInput');
+  const btnUpscale    = document.getElementById('btnUpscale');
+  const btnDownload   = document.getElementById('btnDownload');
+  const origPreview   = document.getElementById('origPreview');
+  const resultCanvas  = document.getElementById('resultCanvas');
+  const previewArea   = document.getElementById('previewArea');
+  const progressWrap  = document.getElementById('progressWrap');
+  const progressFill  = document.getElementById('progressFill');
+  const progressLabel = document.getElementById('progressLabel');
+  const statsRow      = document.getElementById('statsRow');
+  const workCanvas    = document.getElementById('workCanvas');
+
+  let loadedImage = null;
+  let resultBlob  = null;
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function setProgress(pct, label) {
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent = label;
+  }
+
+  // ─── File Loading ─────────────────────────────────────────────────────────
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) loadFile(f);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+  });
+
+  function loadFile(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        loadedImage = img;
+        origPreview.src = e.target.result;
+        document.getElementById('origSize').textContent = img.width + ' × ' + img.height + ' px';
+        previewArea.style.display = 'block';
+        btnUpscale.disabled = false;
+        statsRow.style.display = 'none';
+        btnDownload.style.display = 'none';
+        // clear result canvas
+        const ctx = resultCanvas.getContext('2d');
+        resultCanvas.width = 1; resultCanvas.height = 1;
+        ctx.clearRect(0, 0, 1, 1);
+        document.getElementById('outSize').textContent = '';
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ─── Lanczos kernel ───────────────────────────────────────────────────────
+  function lanczos(x) {
+    if (x === 0) return 1;
+    if (Math.abs(x) >= 3) return 0;
+    const px = Math.PI * x;
+    return (Math.sin(px) / px) * (Math.sin(px / 3) / (px / 3));
+  }
+
+  // ─── Unsharp Masking params ────────────────────────────────────────────────
+  function getSharpParams(level) {
+    switch (level) {
+      case 'light':  return { amount: 0.4, radius: 1, threshold: 5 };
+      case 'strong': return { amount: 1.2, radius: 2, threshold: 2 };
+      default:       return { amount: 0.8, radius: 1, threshold: 3 }; // medium
+    }
+  }
+
+  // ─── 1D Gaussian kernel ───────────────────────────────────────────────────
+  function makeGaussianKernel(sigma) {
+    const size = Math.ceil(sigma * 3) * 2 + 1;
+    const kernel = new Float32Array(size);
+    const half = Math.floor(size / 2);
+    let sum = 0;
+    for (let i = 0; i < size; i++) {
+      const x = i - half;
+      kernel[i] = Math.exp(-(x * x) / (2 * sigma * sigma));
+      sum += kernel[i];
+    }
+    for (let i = 0; i < size; i++) kernel[i] /= sum;
+    return kernel;
+  }
+
+  // ─── Separable Gaussian Blur ──────────────────────────────────────────────
+  function gaussianBlur(data, w, h, sigma) {
+    const kernel = makeGaussianKernel(sigma);
+    const half   = Math.floor(kernel.length / 2);
+    const tmp    = new Float32Array(data.length);
+    const out    = new Uint8ClampedArray(data.length);
+
+    // Horizontal pass
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let k = 0; k < kernel.length; k++) {
+          const px  = Math.min(Math.max(x + k - half, 0), w - 1);
+          const idx = (y * w + px) * 4;
+          r += data[idx]     * kernel[k];
+          g += data[idx + 1] * kernel[k];
+          b += data[idx + 2] * kernel[k];
+          a += data[idx + 3] * kernel[k];
+        }
+        const oi = (y * w + x) * 4;
+        tmp[oi] = r; tmp[oi + 1] = g; tmp[oi + 2] = b; tmp[oi + 3] = a;
+      }
+    }
+
+    // Vertical pass
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let k = 0; k < kernel.length; k++) {
+          const py  = Math.min(Math.max(y + k - half, 0), h - 1);
+          const idx = (py * w + x) * 4;
+          r += tmp[idx]     * kernel[k];
+          g += tmp[idx + 1] * kernel[k];
+          b += tmp[idx + 2] * kernel[k];
+          a += tmp[idx + 3] * kernel[k];
+        }
+        const oi = (y * w + x) * 4;
+        out[oi] = r; out[oi + 1] = g; out[oi + 2] = b; out[oi + 3] = a;
+      }
+    }
+    return out;
+  }
+
+  // ─── Unsharp Mask ─────────────────────────────────────────────────────────
+  function applyUnsharpMask(data, w, h, amount, radius, threshold) {
+    const blurred = gaussianBlur(data, w, h, radius);
+    const result  = new Uint8ClampedArray(data.length);
+    for (let i = 0; i < data.length; i += 4) {
+      for (let c = 0; c < 3; c++) {
+        const orig = data[i + c];
+        const blur = blurred[i + c];
+        const diff = orig - blur;
+        if (Math.abs(diff) > threshold) {
+          result[i + c] = Math.max(0, Math.min(255, Math.round(orig + amount * diff)));
+        } else {
+          result[i + c] = orig;
+        }
+      }
+      result[i + 3] = data[i + 3]; // preserve alpha
+    }
+    return result;
+  }
+
+  // ─── Main Upscale Function ────────────────────────────────────────────────
+  async function upscaleImage() {
+    if (!loadedImage) return;
+
+    btnUpscale.disabled  = true;
+    btnDownload.style.display = 'none';
+    progressWrap.style.display = 'block';
+    statsRow.style.display = 'none';
+    setProgress(5, 'กำลังอ่านข้อมูลภาพต้นฉบับ...');
+    await sleep(30);
+
+    const scale  = parseInt(document.getElementById('scaleSelect').value);
+    const sharp  = document.getElementById('sharpSelect').value;
+    const fmt    = document.getElementById('formatSelect').value;
+    const srcW   = loadedImage.width;
+    const srcH   = loadedImage.height;
+    const dstW   = srcW * scale;
+    const dstH   = srcH * scale;
+
+    // Read source pixels
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width  = srcW;
+    srcCanvas.height = srcH;
+    const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.drawImage(loadedImage, 0, 0);
+    const srcData = srcCtx.getImageData(0, 0, srcW, srcH).data;
+
+    // Prepare output buffer
+    workCanvas.width  = dstW;
+    workCanvas.height = dstH;
+    const wCtx   = workCanvas.getContext('2d');
+    const outImg = wCtx.createImageData(dstW, dstH);
+    const outData = outImg.data;
+
+    setProgress(15, 'กำลัง Upscale ด้วย Lanczos...');
+    await sleep(50);
+
+    // ── Lanczos Resampling ──────────────────────────────────────────────────
+    const SUPPORT   = 3;
+    const total     = dstW * dstH;
+    const chunkRows = Math.max(1, Math.floor(dstH / 20));
+
+    for (let dy = 0; dy < dstH; dy++) {
+      const sy  = (dy + 0.5) / scale - 0.5;
+      const sy0 = Math.floor(sy) - SUPPORT + 1;
+
+      for (let dx = 0; dx < dstW; dx++) {
+        const sx  = (dx + 0.5) / scale - 0.5;
+        const sx0 = Math.floor(sx) - SUPPORT + 1;
+        let r = 0, g = 0, b = 0, a = 0, wSum = 0;
+
+        for (let ky = 0; ky < SUPPORT * 2; ky++) {
+          const py = sy0 + ky;
+          if (py < 0 || py >= srcH) continue;
+          const wy = lanczos(sy - py);
+
+          for (let kx = 0; kx < SUPPORT * 2; kx++) {
+            const px = sx0 + kx;
+            if (px < 0 || px >= srcW) continue;
+            const wx  = lanczos(sx - px);
+            const w   = wx * wy;
+            const idx = (py * srcW + px) * 4;
+            r += srcData[idx]     * w;
+            g += srcData[idx + 1] * w;
+            b += srcData[idx + 2] * w;
+            a += srcData[idx + 3] * w;
+            wSum += w;
+          }
+        }
+
+        const oi = (dy * dstW + dx) * 4;
+        outData[oi]     = Math.max(0, Math.min(255, Math.round(r / wSum)));
+        outData[oi + 1] = Math.max(0, Math.min(255, Math.round(g / wSum)));
+        outData[oi + 2] = Math.max(0, Math.min(255, Math.round(b / wSum)));
+        outData[oi + 3] = Math.max(0, Math.min(255, Math.round(a / wSum)));
+      }
+
+      // Progress update every chunkRows rows
+      if (dy % chunkRows === 0) {
+        const done = (dy + 1) * dstW;
+        const pct  = 15 + Math.round((done / total) * 55);
+        setProgress(pct, `Lanczos Upscale... ${Math.round((done / total) * 100)}%`);
+        await sleep(0);
+      }
+    }
+
+    // ── Unsharp Masking ────────────────────────────────────────────────────
+    setProgress(73, 'กำลังใช้ Unsharp Masking เพิ่มความคมชัด...');
+    await sleep(30);
+
+    const { amount, radius, threshold } = getSharpParams(sharp);
+    const sharpData = applyUnsharpMask(outData, dstW, dstH, amount, radius, threshold);
+
+    // ── Write final result ─────────────────────────────────────────────────
+    setProgress(93, 'กำลังสร้างไฟล์ผลลัพธ์...');
+    await sleep(20);
+
+    const finalImg = wCtx.createImageData(dstW, dstH);
+    finalImg.data.set(sharpData);
+    wCtx.putImageData(finalImg, 0, 0);
+
+    // Mirror to visible result canvas
+    resultCanvas.width  = dstW;
+    resultCanvas.height = dstH;
+    resultCanvas.getContext('2d').drawImage(workCanvas, 0, 0);
+    document.getElementById('outSize').textContent = dstW + ' × ' + dstH + ' px';
+
+    // Encode blob
+    const mimeType = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
+    workCanvas.toBlob(blob => {
+      resultBlob = blob;
+      const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+
+      statsRow.innerHTML = `
+        <span class="stat-pill">📐 ${dstW} × ${dstH} px</span>
+        <span class="stat-pill">🔍 ×${scale} ขนาด</span>
+        <span class="stat-pill">✨ Lanczos + USM</span>
+        <span class="stat-pill">📄 ${sizeMB} MB</span>
+      `;
+      statsRow.style.display  = 'flex';
+      setProgress(100, '✅ เสร็จสิ้น! พร้อมดาวน์โหลด');
+      btnDownload.style.display = 'flex';
+      btnUpscale.disabled = false;
+    }, mimeType, 0.95);
+  }
+
+  // ─── Event Listeners ──────────────────────────────────────────────────────
+  btnUpscale.addEventListener('click', upscaleImage);
+
+  btnDownload.addEventListener('click', () => {
+    if (!resultBlob) return;
+    const fmt   = document.getElementById('formatSelect').value;
+    const ext   = fmt === 'jpeg' ? 'jpg' : 'png';
+    const scale = document.getElementById('scaleSelect').value;
+    const url   = URL.createObjectURL(resultBlob);
+    const a     = document.createElement('a');
+    a.href     = url;
+    a.download = `upscaled_${scale}x.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+</script>
+</body>
+</html>
